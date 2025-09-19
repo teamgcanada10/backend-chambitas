@@ -15,8 +15,21 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // --- Middleware ---
 // CORS Configuration
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  `https://${process.env.FRONTEND_URL}`,
+  `http://${process.env.FRONTEND_URL}`
+];
+
 const corsOptions = {
-  origin: process.env.FRONTEND_URL, // Only allow requests from our frontend
+  origin: function (origin, callback) {
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
