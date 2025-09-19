@@ -14,7 +14,12 @@ const PORT = process.env.PORT || 3001;
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // --- Middleware ---
-app.use(cors());
+// CORS Configuration
+const corsOptions = {
+  origin: process.env.FRONTEND_URL, // Only allow requests from our frontend
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
 app.use(bodyParser.json());
 
 // --- In-memory Database ---
