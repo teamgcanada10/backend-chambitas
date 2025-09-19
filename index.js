@@ -1,135 +1,134 @@
+require('dotenv').config();
 const express = require('express');
+const bodyParser = require('body-parser');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { Resend } = require('resend');
+const sgMail = require('@sendgrid/mail');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- CONFIGURATION ---
-// In a real app, use environment variables for these
-const RESEND_API_KEY = process.env.RESEND_API_KEY || 'YOUR_RESEND_API_KEY';
-const JWT_SECRET = process.env.JWT_SECRET || 'YOUR_JWT_SECRET';
-const resend = new Resend(RESEND_API_KEY);
+// --- SendGrid Configuration ---
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// --- IN-MEMORY DATABASE (for demonstration) ---
-// In a real app, you would use a proper database like PostgreSQL or MongoDB.
-const users = [];
+// --- Middleware ---
+app.use(cors());
+app.use(bodyParser.json());
 
-// --- MIDDLEWARE ---
-app.use(cors()); // Allow requests from other origins
-app.use(express.json()); // Parse JSON bodies
+// --- In-memory Database ---
+let users = [];
 
-// --- API ROUTES ---
+// --- Helper Functions ---
+const generateToken = (user) => {
+    return jwt.sign(
+        { id: user.id, email: user.email, roles: user.roles },
+        process.env.JWT_SECRET || 'supersecret', 
+        { expiresIn: '1h' }
+    );
+};
 
-// 1. User Registration
+// --- Routes ---
+
+// Register a new user
 app.post('/api/auth/register', async (req, res) => {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+        return res.status(400).json({ message: 'Todos los campos son requeridos.' });
+    }
+
+    const existingUser = users.find(u => u.email === email);
+    if (existingUser) {
+        return res.status(400).json({ message: 'El correo ya está registrado.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+
+    const newUser = {
+        id: users.length + 1,
+        name,
+        email,
+        password: hashedPassword,
+        roles: ['user'], // Default role
+        isEmailVerified: false,
+        emailVerificationToken,
+    };
+
+    users.push(newUser);
+
+    // --- Send Verification Email ---
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${emailVerificationToken}`;
+    const msg = {
+        to: newUser.email,
+        from: 'noreply@teamgplay.online', // Use your verified sender identity
+        subject: '¡Bienvenido a Chambitas! Verifica tu correo electrónico',
+        html: `
+            <h1>¡Gracias por registrarte!</h1>
+            <p>Por favor, haz clic en el siguiente enlace para verificar tu correo electrónico y activar tu cuenta:</p>
+            <a href="${verificationLink}">${verificationLink}</a>
+            <p>Si no te registraste en Chambitas, por favor ignora este correo.</p>
+        `,
+    };
+
     try {
-        const { name, email, password } = req.body;
-
-        // Check if user already exists
-        if (users.find(u => u.email === email)) {
-            return res.status(400).json({ message: 'El correo ya está registrado.' });
-        }
-
-        // Hash the password
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        // Generate a verification token
-        const verificationToken = crypto.randomBytes(32).toString('hex');
-
-        const newUser = {
-            id: users.length + 1,
-            name,
-            email,
-            password: hashedPassword,
-            isVerified: false,
-            verificationToken,
-        };
-
-        users.push(newUser);
-
-        // Send verification email using Resend
-        const verificationLink = `http://localhost:5173/verify-email?token=${verificationToken}`;
-        
-        await resend.emails.send({
-            from: 'onboarding@resend.dev', // You can use this for testing
-            to: email,
-            subject: 'Activa tu cuenta en Chambitas',
-            html: `¡Bienvenido a Chambitas! <br/><br/> Haz clic en el siguiente enlace para activar tu cuenta: <a href="${verificationLink}">${verificationLink}</a>`
-        });
-
-        res.status(201).json({ message: 'Usuario registrado. Por favor, revisa tu correo para activar tu cuenta.' });
-
+        await sgMail.send(msg);
+        console.log('Verification email sent to:', newUser.email);
+        res.status(201).json({ message: 'Registro exitoso. Por favor, revisa tu correo para activar tu cuenta.' });
     } catch (error) {
-        console.error('Error en el registro:', error);
-        res.status(500).json({ message: 'Error en el servidor.' });
+        console.error("Error sending verification email:", error.response ? error.response.body : error);
+        // Even if email fails, user is created. You might want to handle this differently.
+        res.status(500).json({ message: 'Usuario registrado, pero ocurrió un error al enviar el correo de verificación.' });
     }
 });
 
-// 2. Email Verification
-app.get('/api/auth/verify', (req, res) => {
-    const { token } = req.query;
+// Verify email address
+app.post('/api/auth/verify-email', (req, res) => {
+    const { token } = req.body;
+    if (!token) {
+        return res.status(400).json({ message: 'Token no proporcionado.' });
+    }
 
-    const user = users.find(u => u.verificationToken === token);
+    const user = users.find(u => u.emailVerificationToken === token);
 
     if (!user) {
-        return res.status(400).send('<h1>Token de verificación inválido o expirado.</h1>');
+        return res.status(400).json({ message: 'Token de verificación inválido o expirado.' });
     }
 
-    user.isVerified = true;
-    user.verificationToken = null; // Token is used, so invalidate it
+    user.isEmailVerified = true;
+    user.emailVerificationToken = null; // Invalidate the token
 
-    // Redirect to login page with a success message
-    res.send('<h1>¡Cuenta verificada con éxito!</h1><p>Ya puedes <a href="http://localhost:5173/login">iniciar sesión</a>.</p>');
+    console.log(`Email verified for user: ${user.email}`);
+    res.status(200).json({ message: 'Correo verificado exitosamente. Ya puedes iniciar sesión.' });
 });
 
-// 3. User Login
+
+// Login user
 app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
-        const user = users.find(u => u.email === email);
+    const { email, password } = req.body;
+    const user = users.find(u => u.email === email);
 
-        // Check if user exists
-        if (!user) {
-            return res.status(401).json({ message: 'Credenciales incorrectas.' });
-        }
-
-        // Check if account is verified
-        if (!user.isVerified) {
-            return res.status(403).json({ message: 'Tu cuenta no ha sido verificada. Por favor, revisa tu correo.' });
-        }
-
-        // Check password
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(401).json({ message: 'Credenciales incorrectas.' });
-        }
-
-        // Generate JWT
-        const token = jwt.sign(
-            { userId: user.id, name: user.name, roles: ['client', 'worker'] }, // Mock roles for now
-            JWT_SECRET,
-            { expiresIn: '1h' } // Token expires in 1 hour
-        );
-
-        res.json({ token });
-
-    } catch (error) {
-        console.error('Error en el login:', error);
-        res.status(500).json({ message: 'Error en el servidor.' });
+    if (!user) {
+        return res.status(404).json({ message: 'Usuario no encontrado.' });
     }
+
+    // Check if email is verified before allowing login
+    if (!user.isEmailVerified) {
+        return res.status(403).json({ message: 'Por favor, verifica tu correo electrónico antes de iniciar sesión.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+        return res.status(400).json({ message: 'Credenciales inválidas.' });
+    }
+
+    const token = generateToken(user);
+    res.json({ token });
 });
 
 
-// Health check route
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', message: 'Backend is running' });
-});
-
-// Start the server
 app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
