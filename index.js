@@ -18,18 +18,11 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  `https://${process.env.FRONTEND_URL}`,
-  `http://${process.env.FRONTEND_URL}`
+  'https://chambitas.teamgplay.online',
 ];
 
 const corsOptions = {
-  origin: function (origin, callback) {
-    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: allowedOrigins,
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
