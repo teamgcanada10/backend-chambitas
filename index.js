@@ -71,7 +71,7 @@ app.post('/api/auth/register', async (req, res) => {
     users.push(newUser);
 
     // --- Send Verification Email ---
-    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${emailVerificationToken}`;
+    const verificationLink = `https://chambitas.teamgplay.online/verify-email?token=${emailVerificationToken}`;
     const msg = {
         to: newUser.email,
         from: 'noreply@teamgplay.online', // Use your verified sender identity
