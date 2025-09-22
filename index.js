@@ -21,11 +21,16 @@ const allowedOrigins = [
   'https://chambitas.teamgplay.online',
 ];
 
-const corsOptions = {
-  origin: allowedOrigins,
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
+app.use(cors({
+    origin: function (origin, callback) {
+        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    optionsSuccessStatus: 200
+}));
 app.use(bodyParser.json());
 
 // --- In-memory Database ---
