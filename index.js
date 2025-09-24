@@ -6,6 +6,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const sgMail = require('@sendgrid/mail');
+const multer = require('multer');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -32,6 +34,19 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 app.use(bodyParser.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// --- Multer Configuration ---
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/')
+  },
+  filename: function (req, file, cb) {
+    cb(null, req.user.id + path.extname(file.originalname)) // user id + extension
+  }
+})
+
+const upload = multer({ storage: storage })
 
 // --- In-memory Database ---
 let users = [];
@@ -43,6 +58,27 @@ const generateToken = (user) => {
         process.env.JWT_SECRET || 'supersecret', 
         { expiresIn: '1h' }
     );
+};
+
+// --- Auth Middleware ---
+const authMiddleware = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).json({ message: 'No token provided.' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret');
+        const user = users.find(u => u.id === decoded.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        req.user = user;
+        next();
+    } catch (error) {
+        res.status(401).json({ message: 'Invalid token.' });
+    }
 };
 
 // --- Routes ---
@@ -71,6 +107,7 @@ app.post('/api/auth/register', async (req, res) => {
         roles: ['user'], // Default role
         isEmailVerified: false,
         emailVerificationToken,
+        imageUrl: '/uploads/default.png' // Add a default image
     };
 
     users.push(newUser);
@@ -141,7 +178,24 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const token = generateToken(user);
-    res.json({ token });
+    res.json({ token, user }); // Return user object on login
+});
+
+// Get current user
+app.get('/api/auth/me', authMiddleware, (req, res) => {
+    res.json(req.user);
+});
+
+// Upload profile picture
+app.post('/api/profile/picture', authMiddleware, upload.single('picture'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded.' });
+    }
+
+    const user = req.user;
+    user.imageUrl = `/uploads/${req.file.filename}`;
+
+    res.json({ message: 'Profile picture updated successfully.', imageUrl: user.imageUrl });
 });
 
 
